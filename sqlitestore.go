@@ -1,4 +1,5 @@
-/* Gorilla Sessions backend for SQLite.
+/*
+	Gorilla Sessions backend for SQLite.
 
 Copyright (c) 2013 Contributors. See the list of contributors in the CONTRIBUTORS file for details.
 
@@ -38,11 +39,11 @@ type sessionRow struct {
 	data       string
 	createdOn  time.Time
 	modifiedOn time.Time
-	expiresOn  time.Time
+	expiresOn  sql.NullTime
 }
 
 type DB interface {
-	Exec(query string, args ...interface{}) (sql.Result, error) 
+	Exec(query string, args ...interface{}) (sql.Result, error)
 	Prepare(query string) (*sql.Stmt, error)
 	Close() error
 }
@@ -69,7 +70,7 @@ func NewSqliteStoreFromConnection(db DB, tableName string, path string, maxAge i
 		"session_data LONGBLOB, " +
 		"created_on TIMESTAMP DEFAULT 0, " +
 		"modified_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-		"expires_on TIMESTAMP DEFAULT 0);"
+		"expires_on TIMESTAMP);"
 	if _, err := db.Exec(cTableQ); err != nil {
 		return nil, err
 	}
@@ -170,7 +171,7 @@ func (m *SqliteStore) Save(r *http.Request, w http.ResponseWriter, session *sess
 func (m *SqliteStore) insert(session *sessions.Session) error {
 	var createdOn time.Time
 	var modifiedOn time.Time
-	var expiresOn time.Time
+	var expiresOn *time.Time
 	crOn := session.Values["created_on"]
 	if crOn == nil {
 		createdOn = time.Now()
@@ -180,9 +181,15 @@ func (m *SqliteStore) insert(session *sessions.Session) error {
 	modifiedOn = createdOn
 	exOn := session.Values["expires_on"]
 	if exOn == nil {
-		expiresOn = time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
+		if session.Options.MaxAge != 0 {
+			t := time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
+			expiresOn = &t
+		}
 	} else {
-		expiresOn = exOn.(time.Time)
+		t := exOn.(sql.NullTime)
+		if t.Valid {
+			expiresOn = &t.Time
+		}
 	}
 	delete(session.Values, "created_on")
 	delete(session.Values, "expires_on")
@@ -227,7 +234,7 @@ func (m *SqliteStore) save(session *sessions.Session) error {
 		return m.insert(session)
 	}
 	var createdOn time.Time
-	var expiresOn time.Time
+	var expiresOn *time.Time
 	crOn := session.Values["created_on"]
 	if crOn == nil {
 		createdOn = time.Now()
@@ -237,12 +244,17 @@ func (m *SqliteStore) save(session *sessions.Session) error {
 
 	exOn := session.Values["expires_on"]
 	if exOn == nil {
-		expiresOn = time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
-		log.Print("nil")
+		if session.Options.MaxAge != 0 {
+			t := time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
+			expiresOn = &t
+		}
 	} else {
-		expiresOn = exOn.(time.Time)
-		if expiresOn.Sub(time.Now().Add(time.Second*time.Duration(session.Options.MaxAge))) < 0 {
-			expiresOn = time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
+		e := exOn.(sql.NullTime)
+		if e.Valid {
+			if e.Time.Sub(time.Now().Add(time.Second*time.Duration(session.Options.MaxAge))) < 0 {
+				t := time.Now().Add(time.Second * time.Duration(session.Options.MaxAge))
+				expiresOn = &t
+			}
 		}
 	}
 
@@ -267,8 +279,8 @@ func (m *SqliteStore) load(session *sessions.Session) error {
 	if scanErr != nil {
 		return scanErr
 	}
-	if sess.expiresOn.Sub(time.Now()) < 0 {
-		log.Printf("Session expired on %s, but it is %s now.", sess.expiresOn, time.Now())
+	if sess.expiresOn.Valid && sess.expiresOn.Time.Sub(time.Now()) < 0 {
+		log.Printf("Session expired on %s, but it is %s now.", sess.expiresOn.Time, time.Now())
 		return errors.New("Session expired")
 	}
 	err := securecookie.DecodeMulti(session.Name(), sess.data, &session.Values, m.Codecs...)
