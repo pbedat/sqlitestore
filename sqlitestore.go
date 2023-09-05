@@ -45,7 +45,6 @@ type sessionRow struct {
 type DB interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Prepare(query string) (*sql.Stmt, error)
-	Close() error
 }
 
 func init() {
@@ -122,7 +121,6 @@ func (m *SqliteStore) Close() {
 	m.stmtUpdate.Close()
 	m.stmtDelete.Close()
 	m.stmtInsert.Close()
-	m.db.Close()
 }
 
 func (m *SqliteStore) Get(r *http.Request, name string) (*sessions.Session, error) {
